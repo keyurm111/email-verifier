@@ -1,4 +1,4 @@
 pandas
 dnspython
+smtplib
 streamlit
-email-validator
