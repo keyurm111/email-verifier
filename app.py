@@ -12,15 +12,21 @@ from urllib.parse import urlparse
 # --------------------------
 # ✅ CONFIG
 # --------------------------
-MAX_THREADS = 5
+# Reduced threads for Render deployment to avoid timeouts
+MAX_THREADS = 3
 FROM_EMAIL = "test@example.com"
 MX_CACHE = {}
+# Timeout settings for Render
+SMTP_TIMEOUT = 3  # Reduced from 5 for faster processing
+DNS_TIMEOUT = 3   # Reduced from 5 for faster processing
 
 ROLE_ACCOUNTS = {"admin", "info", "support", "contact", "sales"}
 DISPOSABLE_DOMAINS = {"mailinator.com", "tempmail.com", "10minutemail.com"}
 FREE_PROVIDERS = {"gmail.com", "yahoo.com", "outlook.com", "hotmail.com"}
 
 os.makedirs("uploads", exist_ok=True)
+# Create temp directory for output files
+os.makedirs("temp", exist_ok=True)
 
 # --------------------------
 # ✅ LOGGING
@@ -38,11 +44,11 @@ def smtp_check(email):
         if domain in MX_CACHE:
             mx_record = MX_CACHE[domain]
         else:
-            answers = dns.resolver.resolve(domain, 'MX', lifetime=5)
+            answers = dns.resolver.resolve(domain, 'MX', lifetime=DNS_TIMEOUT)
             mx_record = str(answers[0].exchange).rstrip('.')
             MX_CACHE[domain] = mx_record
 
-        server = smtplib.SMTP(timeout=5)
+        server = smtplib.SMTP(timeout=SMTP_TIMEOUT)
         server.connect(mx_record)
         server.helo(socket.gethostname())
         server.mail(FROM_EMAIL)
@@ -93,7 +99,7 @@ def verify_email_verbose(email):
         return "Risky", steps, syntax_result, role_result, mx_result, smtp_result, catchall_result
 
     try:
-        answers = dns.resolver.resolve(domain, 'MX', lifetime=5)
+        answers = dns.resolver.resolve(domain, 'MX', lifetime=DNS_TIMEOUT)
     except Exception as e:
         steps.append(f"❌ MX check failed: {e}")
         mx_result = '❌'
@@ -360,10 +366,12 @@ def process_file(uploaded_file, progress_area, table_area, final_summary_area, e
 
     batch_size = 10
     batches = [df.iloc[i:i+batch_size] for i in range(0, len(df), batch_size)]
-    with pd.ExcelWriter('final_verified.xlsx') as writer:
+    excel_path = os.path.join('temp', 'final_verified.xlsx')
+    csv_path = os.path.join('temp', 'final_verified.csv')
+    with pd.ExcelWriter(excel_path) as writer:
         for idx, batch in enumerate(batches, 1):
             batch.to_excel(writer, sheet_name=f'Batch {idx}', index=False)
-    df.to_csv('final_verified.csv', index=False)
+    df.to_csv(csv_path, index=False)
     st.info("✅ Step 5: Batching done")
 
     # Step 6: Filter by email domain
@@ -390,10 +398,12 @@ def process_file(uploaded_file, progress_area, table_area, final_summary_area, e
     final_count = len(df)
     batch_size = 10
     batches = [df.iloc[i:i+batch_size] for i in range(0, len(df), batch_size)]
-    with pd.ExcelWriter('final_verified.xlsx') as writer:
+    excel_path = os.path.join('temp', 'final_verified.xlsx')
+    csv_path = os.path.join('temp', 'final_verified.csv')
+    with pd.ExcelWriter(excel_path) as writer:
         for idx, batch in enumerate(batches, 1):
             batch.to_excel(writer, sheet_name=f'Batch {idx}', index=False)
-    df.to_csv('final_verified.csv', index=False)
+    df.to_csv(csv_path, index=False)
 
     # Build summary message
     summary_msg = (
@@ -409,7 +419,7 @@ def process_file(uploaded_file, progress_area, table_area, final_summary_area, e
     
     final_summary_area.success(summary_msg)
 
-    return "final_verified.xlsx"
+    return excel_path
 
 # --------------------------
 # ✅ STREAMLIT UI
@@ -453,10 +463,11 @@ if uploaded_file:
         try:
             output_path = process_file(uploaded_file, progress_area, table_area, final_summary_area, excluded_names)
 
+            csv_path = os.path.join('temp', 'final_verified.csv')
             with open(output_path, "rb") as f:
                 st.download_button("📄 Download Excel (Batches)", f, file_name="final_verified.xlsx")
 
-            with open('final_verified.csv', "rb") as f:
+            with open(csv_path, "rb") as f:
                 st.download_button("📄 Download CSV (Flat)", f, file_name="final_verified.csv")
 
         except Exception as e:

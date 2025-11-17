@@ -1,0 +1,23 @@
+[server]
+port = 8501
+address = "0.0.0.0"
+headless = true
+enableCORS = false
+enableXsrfProtection = false
+
+[server.fileWatcherType]
+type = "none"
+
+[server.maxUploadSize]
+maxUploadSize = 200
+
+[server.maxMessageSize]
+maxMessageSize = 200
+
+[runner]
+fastReruns = true
+magicEnabled = true
+
+[client]
+showErrorDetails = true
+

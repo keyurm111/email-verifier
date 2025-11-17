@@ -1,4 +1,5 @@
 pandas
 dnspython
-smtplib
+email-validator
+openpyxl
 streamlit
