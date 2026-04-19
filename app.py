@@ -422,6 +422,75 @@ def process_file(uploaded_file, progress_area, table_area, final_summary_area, e
     return excel_path
 
 # --------------------------
+# ✅ PROCESS NO WEBSITE LEADS
+# --------------------------
+def process_no_website(uploaded_file, final_summary_area, excluded_names=None):
+    df = pd.read_csv(uploaded_file)
+
+    # ✅ REMOVE UNNECESSARY FIELDS
+    fields_to_remove = [
+        "ID", "Featured image", "Bing Maps URL", "Latitude", "Longitude",
+        "Rating", "Rating Info", "Open Hours", "Price", "Scraped At"
+    ]
+    df.drop(columns=[col for col in fields_to_remove if col in df.columns], inplace=True)
+    st.info("✅ Unnecessary fields removed")
+
+    email_col = next((col for col in df.columns if 'email' in col.lower()), None)
+    if not email_col:
+        raise Exception(f"No email column found. Columns: {df.columns.tolist()}")
+
+    df = expand_rows(df, email_col)
+    st.info("✅ Step 1: Email splitting done")
+
+    # Find Website column
+    website_col = next((col for col in df.columns if 'website' in col.lower()), None)
+    
+    if not website_col:
+        st.warning("⚠️ No 'Website' column found. All leads will be considered as having no website.")
+        filtered_df = df
+    else:
+        # Filter for rows where website is missing or placeholder
+        filtered_df = df[
+            df[website_col].isna() | 
+            (df[website_col].str.strip() == "") | 
+            (df[website_col].str.lower() == "-- no data --") |
+            (df[website_col].str.lower() == "nan")
+        ].reset_index(drop=True)
+
+    st.info(f"✅ Step 2: Filtered leads without website (Found {len(filtered_df)} leads)")
+
+    # Step 3: Filter by excluded names (optional)
+    name_filter_removed = 0
+    if excluded_names and len(excluded_names) > 0:
+        name_col = next((col for col in filtered_df.columns if 'name' in col.lower()), None)
+        if name_col:
+            before_name_filter_count = len(filtered_df)
+            filtered_df = filter_leads_by_excluded_names(filtered_df, excluded_names, name_col)
+            after_name_filter_count = len(filtered_df)
+            name_filter_removed = before_name_filter_count - after_name_filter_count
+            st.info(f"✅ Step 3: Name filtering done (removed {name_filter_removed} leads, kept {after_name_filter_count} leads)")
+        else:
+            st.warning("⚠️ No 'Name' column found. Skipping name filter.")
+
+    # Save results
+    excel_path = os.path.join('temp', 'no_website_leads.xlsx')
+    csv_path = os.path.join('temp', 'no_website_leads.csv')
+    
+    # Batch if needed, or just save
+    batch_size = 10
+    batches = [filtered_df.iloc[i:i+batch_size] for i in range(0, len(filtered_df), batch_size)]
+    with pd.ExcelWriter(excel_path) as writer:
+        if len(batches) == 0:
+            pd.DataFrame().to_excel(writer, sheet_name='Empty')
+        for idx, batch in enumerate(batches, 1):
+            batch.to_excel(writer, sheet_name=f'Batch {idx}', index=False)
+    filtered_df.to_csv(csv_path, index=False)
+    
+    final_summary_area.success(f"🎉 Done! Extracted {len(filtered_df)} leads without a website.")
+    
+    return excel_path, csv_path
+
+# --------------------------
 # ✅ STREAMLIT UI
 # --------------------------
 st.title("📧 Perfect Bulk Email Verifier — Live Table View")
@@ -430,6 +499,14 @@ uploaded_file = st.file_uploader(
     "Upload your CSV file with an 'Email' column.",
     type=['csv']
 )
+
+# Mode Selection
+mode = st.radio(
+    "Select Processing Mode",
+    ["Email Verifier", "Only Leads Without Website"],
+    help="Email Verifier: Normal verification process.\nOnly Leads Without Website: Filters and returns only leads that don't have a website."
+)
+
 
 # Optional: Excluded names field
 st.subheader("🔧 Optional Filters")
@@ -440,20 +517,18 @@ excluded_names_text = st.text_area(
 )
 
 if uploaded_file:
-    if st.button("Start Verification"):
+    if st.button("Start Processing"):
         progress_area = st.progress(0)
         table_area = st.empty()
         final_summary_area = st.empty()
 
-        st.info("⏳ Running... Watch the live verification table below:")
+        st.info(f"⏳ Running in **{mode}** mode...")
 
         # Parse excluded names
         excluded_names = None
         if excluded_names_text and excluded_names_text.strip():
-            # Split by newlines and commas, then clean up
             names_list = []
             for line in excluded_names_text.split('\n'):
-                # Also split by comma in case user uses comma-separated format
                 for name in line.split(','):
                     name = name.strip()
                     if name:
@@ -461,14 +536,26 @@ if uploaded_file:
             excluded_names = names_list if names_list else None
 
         try:
-            output_path = process_file(uploaded_file, progress_area, table_area, final_summary_area, excluded_names)
+            if mode == "Email Verifier":
+                output_path = process_file(uploaded_file, progress_area, table_area, final_summary_area, excluded_names)
+                csv_path = os.path.join('temp', 'final_verified.csv')
+                
+                with open(output_path, "rb") as f:
+                    st.download_button("📄 Download Excel (Batches)", f, file_name="final_verified.xlsx")
 
-            csv_path = os.path.join('temp', 'final_verified.csv')
-            with open(output_path, "rb") as f:
-                st.download_button("📄 Download Excel (Batches)", f, file_name="final_verified.xlsx")
+                with open(csv_path, "rb") as f:
+                    st.download_button("📄 Download CSV (Flat)", f, file_name="final_verified.csv")
+            
+            else:  # Only Leads Without Website
+                progress_area.progress(0.5)
+                output_path, csv_path = process_no_website(uploaded_file, final_summary_area, excluded_names)
+                progress_area.progress(1.0)
+                
+                with open(output_path, "rb") as f:
+                    st.download_button("📄 Download Excel (No Website)", f, file_name="no_website_leads.xlsx")
 
-            with open(csv_path, "rb") as f:
-                st.download_button("📄 Download CSV (Flat)", f, file_name="final_verified.csv")
+                with open(csv_path, "rb") as f:
+                    st.download_button("📄 Download CSV (No Website)", f, file_name="no_website_leads.csv")
 
         except Exception as e:
             st.error(f"❌ Error: {e}")
